@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import csv
-import io
-from datetime import datetime, timezone
+import re
+from datetime import datetime
 from pathlib import Path
 
 from .api import ClockifyAPI, parse_iso_duration_to_hours
@@ -20,15 +20,11 @@ CSV_HEADERS = [
     "Description",
     "Tags",
     "Billable",
+    "Hourly Rate",
+    "Currency",
+    "Type",
+    "Timezone",
 ]
-
-
-def _fmt_dt(iso_str: str | None) -> str:
-    """Format ISO datetime to human-readable."""
-    if not iso_str:
-        return ""
-    dt = datetime.fromisoformat(iso_str)
-    return dt.strftime("%Y-%m-%d %H:%M")
 
 
 def _fmt_date(iso_str: str | None) -> str:
@@ -45,6 +41,11 @@ def _fmt_time(iso_str: str | None) -> str:
     return dt.strftime("%H:%M")
 
 
+def _sanitize_dirname(name: str) -> str:
+    """Make a string safe for use as a directory name."""
+    return re.sub(r'[<>:"/\\|?*]', "_", name).strip()
+
+
 def export_workspace(
     api: ClockifyAPI,
     workspace_id: str,
@@ -52,8 +53,9 @@ def export_workspace(
     output_dir: Path,
     since: datetime | None = None,
 ) -> dict[str, int]:
-    """Export all time entries for a workspace, grouped by month.
+    """Export all time entries for a workspace, grouped by year/month.
 
+    Directory structure: {output_dir}/{workspace_name}/{year}/{MM}.csv
     Returns dict of {YYYY-MM: row_count}.
     """
     # Resolve current user
@@ -64,7 +66,6 @@ def export_workspace(
     # Fetch lookup tables
     print("  Fetching projects...")
     projects = {p["id"]: p for p in api.get_projects(workspace_id)}
-    # Fetch clients (after entries to skip if no data)
     print("  Fetching clients...")
     clients = {c["id"]: c for c in api.get_clients(workspace_id)}
     print("  Fetching tags...")
@@ -82,8 +83,6 @@ def export_workspace(
     for proj_id in project_ids_in_entries:
         for t in api.get_tasks(workspace_id, proj_id):
             tasks[t["id"]] = t
-    print("  Fetching tags...")
-    tags = {t["id"]: t for t in api.get_tags(workspace_id)}
 
     # Build project -> client mapping
     project_client: dict[str, str] = {}
@@ -92,7 +91,7 @@ def export_workspace(
         if client_id and client_id in clients:
             project_client[p["id"]] = clients[client_id].get("name", "")
 
-    # Group by month
+    # Group by year/month
     by_month: dict[str, list[dict]] = {}
     for entry in entries:
         start_str = entry.get("timeInterval", {}).get("start")
@@ -102,11 +101,17 @@ def export_workspace(
         month_key = dt.strftime("%Y-%m")
         by_month.setdefault(month_key, []).append(entry)
 
-    # Write CSVs
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # Write CSVs: output_dir / workspace_name / year / <workspace>_<year>-<month>.csv
+    safe_ws_name = _sanitize_dirname(workspace_name)
+    ws_dir = output_dir / safe_ws_name
     counts: dict[str, int] = {}
     for month_key, month_entries in sorted(by_month.items()):
-        csv_path = output_dir / f"{workspace_name}_{month_key}.csv"
+        year, month = month_key.split("-")
+        year_dir = ws_dir / year
+        year_dir.mkdir(parents=True, exist_ok=True)
+        # Filename carries workspace + year so files stay identifiable when moved
+        csv_path = year_dir / f"{safe_ws_name}_{year}-{month}.csv"
+
         with open(csv_path, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
             writer.writerow(CSV_HEADERS)
@@ -121,7 +126,12 @@ def export_workspace(
 
                 project_id = entry.get("projectId", "")
                 task_id = entry.get("taskId", "")
-                tag_ids = entry.get("tagIds", [])
+                tag_ids = entry.get("tagIds") or []
+
+                # Hourly rate is in cents
+                hourly_rate_obj = entry.get("hourlyRate") or {}
+                rate_cents = hourly_rate_obj.get("amount", 0)
+                currency = hourly_rate_obj.get("currency", "")
 
                 writer.writerow([
                     _fmt_date(start),
@@ -132,10 +142,15 @@ def export_workspace(
                     project_client.get(project_id, ""),
                     tasks.get(task_id, {}).get("name", ""),
                     entry.get("description", ""),
-                    ", ".join(tags.get(tid, {}).get("name", "") for tid in (tag_ids or [])),
+                    ", ".join(tags.get(tid, {}).get("name", "") for tid in tag_ids),
                     entry.get("billable", ""),
+                    f"{rate_cents / 100:.2f}" if rate_cents else "",
+                    currency,
+                    entry.get("type", ""),
+                    (entry.get("timeInterval") or {}).get("timeZone", ""),
                 ])
+
         counts[month_key] = len(month_entries)
-        print(f"  Wrote {csv_path.name} ({len(month_entries)} entries)")
+        print(f"  Wrote {csv_path.relative_to(output_dir)} ({len(month_entries)} entries)")
 
     return counts

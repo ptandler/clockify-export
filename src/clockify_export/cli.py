@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 from .api import ClockifyAPI, ClockifyError
+from .config import Config, create_config_file, get_last_exported, set_last_exported
 from .export import export_workspace
-from .state import get_last_exported, get_state_summary, set_last_exported
 
 
 def main() -> None:
@@ -20,9 +18,15 @@ def main() -> None:
     )
     parser.add_argument(
         "--output-dir", "-o",
-        type=Path,
-        default=Path("export"),
-        help="Output directory for CSV files (default: ./export)",
+        type=str,
+        default=None,
+        help="Output directory for CSV files (default: ./export or config export_dir)",
+    )
+    parser.add_argument(
+        "--api-key",
+        type=str,
+        default=None,
+        help="Clockify API key (overrides config/env). Alternatively use CLOCKIFY_API_KEY or config.",
     )
     parser.add_argument(
         "--full",
@@ -47,27 +51,42 @@ def main() -> None:
         action="store_true",
         help="Show export state and exit",
     )
+    parser.add_argument(
+        "--init-config",
+        action="store_true",
+        help="Create ~/.config/clockify-export/config.toml and exit",
+    )
     args = parser.parse_args()
 
-    # Load API key
-    api_key = os.environ.get("CLOCKIFY_API_KEY")
-    if not api_key:
-        env_file = Path(".env")
-        if env_file.exists():
-            for line in env_file.read_text().splitlines():
-                line = line.strip()
-                if line.startswith("CLOCKIFY_API_KEY="):
-                    api_key = line.split("=", 1)[1].strip().strip("\"'")
-                    break
-    if not api_key:
-        print("Error: CLOCKIFY_API_KEY not set. Export it or put it in .env", file=sys.stderr)
+    if args.init_config:
+        path = create_config_file()
+        print(f"Created config file: {path}")
+        print("Edit it to set your API key and export directory.")
+        return
+
+    # Load configuration
+    cfg = Config.load(args)
+
+    if not cfg.api_key:
+        print(
+            "Error: No API key found.\n"
+            "  Set it via:\n"
+            "    1.  --api-key flag\n"
+            "    2.  CLOCKIFY_API_KEY environment variable\n"
+            "    3.  ~/.config/clockify-export/config.toml\n"
+            "    4.  .env file in the current directory\n"
+            "  Run: clockify-export --init-config to create a config file.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
-    api = ClockifyAPI(api_key)
+    api = ClockifyAPI(cfg.api_key)
 
     # Status mode
     if args.status:
-        state = get_state_summary()
+        import json
+        from .config import get_state
+        state = get_state()
         if not state:
             print("No export state found.")
             return
@@ -88,16 +107,20 @@ def main() -> None:
         sys.exit(1)
 
     # Filter workspaces if specified
-    if args.workspace:
-        ws_names = set(args.workspace)
+    if cfg.workspaces:
+        ws_names = set(cfg.workspaces)
         workspaces = [w for w in workspaces if w.get("name") in ws_names]
         if not workspaces:
-            print(f"Workspace(s) not found. Available: {[w['name'] for w in api.get_workspaces()]}", file=sys.stderr)
+            print(
+                f"Workspace(s) not found. Available: {[w['name'] for w in api.get_workspaces()]}",
+                file=sys.stderr,
+            )
             sys.exit(1)
 
     print(f"Found {len(workspaces)} workspace(s): {', '.join(w['name'] for w in workspaces)}")
     print()
 
+    output_dir = cfg.export_dir
     for ws in workspaces:
         ws_id = ws["id"]
         ws_name = ws["name"]
@@ -105,15 +128,15 @@ def main() -> None:
 
         # Determine start date
         since = None
-        if args.from_date:
+        if cfg.from_date:
             # Explicit --from flag overrides everything
-            since = datetime.strptime(args.from_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-            print(f"  --from: fetching since {args.from_date}")
-        elif not args.full:
+            since = datetime.strptime(cfg.from_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            print(f"  --from: fetching since {cfg.from_date}")
+        elif not cfg.full:
             last = get_last_exported(ws_id)
             if last:
                 # Start from the day after last export
-                since = last + timedelta(days=1)
+                since = datetime.fromisoformat(last) + timedelta(days=1)
                 print(f"  Incremental: fetching since {since.strftime('%Y-%m-%d')}")
             else:
                 print("  No prior export found — exporting all data")
@@ -121,7 +144,7 @@ def main() -> None:
             print("  Full export mode")
 
         try:
-            counts = export_workspace(api, ws_id, ws_name, args.output_dir, since=since)
+            counts = export_workspace(api, ws_id, ws_name, output_dir, since=since)
             if counts:
                 # Update state to the latest entry date
                 latest_month = max(counts.keys())
@@ -130,7 +153,7 @@ def main() -> None:
                 from calendar import monthrange
                 _, last_day = monthrange(latest_ts.year, latest_ts.month)
                 latest_ts = latest_ts.replace(day=last_day)
-                set_last_exported(ws_id, latest_ts)
+                set_last_exported(ws_id, latest_ts.isoformat())
                 total = sum(counts.values())
                 print(f"  Total: {total} entries across {len(counts)} month(s)")
             else:
