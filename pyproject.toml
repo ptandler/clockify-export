@@ -1,0 +1,16 @@
+[project]
+name = "clockify-export"
+version = "0.1.0"
+description = "Export Clockify time entries to CSV with incremental support"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+clockify-export = "clockify_export.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/clockify_export"]

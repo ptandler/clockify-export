@@ -1,0 +1,13 @@
+[tools]
+python = "3.12"
+
+[env]
+_.file = [".env"]
+
+[tasks]
+install = "uv sync"
+run = "uv run clockify-export"
+export = "uv run clockify-export --output-dir ./export"
+export-full = "uv run clockify-export --full --output-dir ./export"
+status = "uv run clockify-export --status"
+test = "uv run python -c \"from clockify_export.api import ClockifyAPI; print('import ok')\""
