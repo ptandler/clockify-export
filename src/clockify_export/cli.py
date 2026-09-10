@@ -7,7 +7,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 from .api import ClockifyAPI, ClockifyError
-from .config import Config, create_config_file, get_last_exported, set_last_exported
+from .config import CONFIG_FILE, Config, create_config_file, get_last_exported, set_last_exported
 from .export import export_workspace
 
 
@@ -87,6 +87,8 @@ def main() -> None:
         import json
         from .config import get_state
         state = get_state()
+        print(f"Export directory: {cfg.export_dir}")
+        print(f"Config file: {CONFIG_FILE}")
         if not state:
             print("No export state found.")
             return
