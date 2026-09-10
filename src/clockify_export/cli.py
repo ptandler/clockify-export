@@ -9,12 +9,18 @@ from datetime import datetime, timedelta, timezone
 from .api import ClockifyAPI, ClockifyError
 from .config import CONFIG_FILE, Config, create_config_file, get_last_exported, set_last_exported
 from .export import export_workspace
+from . import __version__
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="clockify-export",
         description="Export Clockify time entries to CSV",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
     )
     parser.add_argument(
         "--output-dir", "-o",
