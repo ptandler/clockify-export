@@ -23,6 +23,18 @@ and writes one CSV per calendar month.
 
 Requires [uv](https://docs.astral.sh/uv/) (or any Python 3.11+ + pip).
 
+### Global install (recommended, adds `clockify-export` to your PATH)
+
+```bash
+uv tool install clockify-export      # from PyPI
+# or from a local checkout:
+uv tool install .
+```
+
+Updates: `uv tool upgrade clockify-export`.
+
+### Development (from a checkout)
+
 ```bash
 uv sync
 ```
