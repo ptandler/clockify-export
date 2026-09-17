@@ -168,3 +168,55 @@ always consistent.
 ## License
 
 MIT
+
+## Schedule Daily Export via systemd
+
+Use can use systemd timers to call the export regularily.
+
+### Install with mise
+
+[mise](https://mise.jdx.dev) can install the systemd unit automatically:
+
+```bash
+mise install-systemd
+```
+
+This copies the service/timer files to `~/.config/systemd/user/` and enables the timer.
+
+### Systemd Timer (daily export)
+
+To run the export automatically every day as a systemd user unit:
+
+#### 1. Install the service and timer
+
+```bash
+cp systemd/clockify-export.service "$HOME/.config/systemd/user/"
+cp systemd/clockify-export.timer "$HOME/.config/systemd/user/"
+systemctl --user daemon-reload
+systemctl --user enable --now clockify-export.timer
+```
+
+#### 2. Set your API key
+
+The unit reads the Clockify API key from the config file.
+You can create one via `clockify-export --init-config` and ensure the
+`api_key` is set in `~/.config/clockify-export/config.toml`.
+
+#### 3. Manage the timer
+
+The default timer is for daily export. Feel free to adjust `OnUnitActiveSec` if desired.
+
+```bash
+# View status
+systemctl --user status clockify-export.timer
+systemctl --user status clockify-export.service
+
+# Manual run
+systemctl --user clockify-export
+
+# Disable
+systemctl --user disable --now clockify-export.timer
+```
+
+> Note: The service uses `Type=oneshot` so it completes and exits each day.
+> Logs can be viewed with `journalctl --user -u clockify-export.service`.
