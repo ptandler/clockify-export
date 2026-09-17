@@ -25,7 +25,21 @@ STATE_FILE = CONFIG_DIR / "state.json"
 DEFAULTS = {
     "api_key": None,
     "export_dir": "export",
+    "refetch": 1,
 }
+
+CONFIG_HELP = """
+Supported configuration options (config.toml):
+  api_key       - Clockify API key (required)
+  export_dir    - Output directory for CSV files (default: "export")
+  refetch       - Number of months to re-fetch from last exported date (default: 1)
+
+Example config.toml:
+  # Clockify export configuration
+  api_key = "YOUR_API_KEY"
+  export_dir = "export"
+  refetch = 1
+"""
 
 
 @dataclass
@@ -35,6 +49,7 @@ class Config:
     full: bool = False
     workspaces: list[str] = field(default_factory=list)
     from_date: str | None = None
+    refetch: int = 0
 
     @classmethod
     def load(cls, args=None) -> Config:
@@ -61,6 +76,12 @@ class Config:
         full = getattr(args, "full", False) if args else False
         workspaces = getattr(args, "workspace", []) if args else []
         from_date = getattr(args, "from_date", None) if args else None
+        
+        # For refetch: CLI arg wins, then config file, then default
+        if args and getattr(args, "refetch", None) is not None:
+            refetch = args.refetch
+        else:
+            refetch = file_cfg.get("refetch", DEFAULTS["refetch"])
 
         return cls(
             api_key=api_key or "",
@@ -68,6 +89,7 @@ class Config:
             full=full,
             workspaces=workspaces or [],
             from_date=from_date,
+            refetch=refetch,
         )
 
 
@@ -111,8 +133,46 @@ def create_config_file(api_key: str = "", export_dir: str = "export") -> Path:
         "# Clockify export configuration\n"
         f'api_key = "{api_key}"\n'
         f'export_dir = "{export_dir}"\n'
+        "# Number of months to re-fetch from last exported date (default: 1)\n"
+        "refetch = 1\n"
     )
     return CONFIG_FILE
+
+
+def parse_from_date(date_str: str) -> datetime:
+    """Parse --from date string (YYYY-MM or YYYY-MM-DD) and return first day of that month."""
+    parts = date_str.split("-")
+    if len(parts) < 2:
+        raise ValueError(f"Invalid date format: {date_str}. Use YYYY-MM or YYYY-MM-DD")
+    year = int(parts[0])
+    month = int(parts[1])
+    return datetime(year, month, 1, tzinfo=timezone.utc)
+
+
+def calculate_last_months(last: int) -> datetime:
+    """Calculate the first day of the month that is 'last' complete months ago."""
+    now = datetime.now(timezone.utc)
+    # Go back 'last' months from the current month, then get the first day of that month
+    # If last=1, we want last complete month (not current month)
+    year = now.year
+    month = now.month - last
+    while month <= 0:
+        month += 12
+        year -= 1
+    return datetime(year, month, 1, tzinfo=timezone.utc)
+
+
+def calculate_refetch_date(refetch: int, last_exported: str | None) -> datetime | None:
+    """Calculate the date to start re-fetching from, going back 'refetch' months from last exported."""
+    if not last_exported or refetch <= 0:
+        return None
+    last_dt = datetime.fromisoformat(last_exported)
+    year = last_dt.year
+    month = last_dt.month - refetch
+    while month <= 0:
+        month += 12
+        year -= 1
+    return datetime(year, month, 1, tzinfo=timezone.utc)
 
 
 def get_state() -> dict:

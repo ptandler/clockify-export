@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import csv
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .api import ClockifyAPI, parse_iso_duration_to_hours
+from .cache import load_workspace_data, save_workspace_data
 
 CSV_HEADERS = [
     "Date",
@@ -46,30 +47,56 @@ def _sanitize_dirname(name: str) -> str:
     return re.sub(r'[<>:"/\\|?*]', "_", name).strip()
 
 
+def _is_current_month(year: str, month: str) -> bool:
+    """Check if the given year/month is the current month."""
+    now = datetime.now(timezone.utc)
+    return int(year) == now.year and int(month) == now.month
+
+
+def _cleanup_old_current_month_files(year_dir: Path, safe_ws_name: str, year: str, month: str, current_date_str: str) -> None:
+    """Remove old current-month files with different dates."""
+    pattern = f"{safe_ws_name}_{year}-{month}-*.csv"
+    for old_file in year_dir.glob(pattern):
+        if current_date_str not in old_file.name:
+            print(f"  Removing old current-month file: {old_file.relative_to(year_dir.parent.parent)}")
+            old_file.unlink(missing_ok=True)
+
+
 def export_workspace(
     api: ClockifyAPI,
     workspace_id: str,
     workspace_name: str,
     output_dir: Path,
     since: datetime | None = None,
-) -> dict[str, int]:
+) -> tuple[dict[str, int], datetime | None]:
     """Export all time entries for a workspace, grouped by year/month.
 
     Directory structure: {output_dir}/{workspace_name}/{year}/{MM}.csv
-    Returns dict of {YYYY-MM: row_count}.
+    Returns (counts_dict, latest_entry_date) where latest_entry_date is the
+    most recent entry's start time (or None if no entries).
     """
     # Resolve current user
     user = api.get_current_user()
     user_id = user["id"]
     print(f"  User: {user.get('name', user_id)}")
 
-    # Fetch lookup tables
-    print("  Fetching projects...")
-    projects = {p["id"]: p for p in api.get_projects(workspace_id)}
-    print("  Fetching clients...")
-    clients = {c["id"]: c for c in api.get_clients(workspace_id)}
-    print("  Fetching tags...")
-    tags = {t["id"]: t for t in api.get_tags(workspace_id)}
+    # Try to load from cache first
+    cached = load_workspace_data(output_dir, workspace_id)
+    if cached:
+        projects = {p["id"]: p for p in cached.get("projects", [])}
+        clients = {c["id"]: c for c in cached.get("clients", [])}
+        tags = {t["id"]: t for t in cached.get("tags", [])}
+        print("  Using cached projects, clients, tags")
+    else:
+        # Fetch lookup tables
+        print("  Fetching projects...")
+        projects = {p["id"]: p for p in api.get_projects(workspace_id)}
+        print("  Fetching clients...")
+        clients = {c["id"]: c for c in api.get_clients(workspace_id)}
+        print("  Fetching tags...")
+        tags = {t["id"]: t for t in api.get_tags(workspace_id)}
+        # Save to cache
+        save_workspace_data(output_dir, workspace_id, list(projects.values()), list(clients.values()), list(tags.values()))
 
     # Fetch time entries first to know which projects have entries
     print("  Fetching time entries...")
@@ -91,13 +118,16 @@ def export_workspace(
         if client_id and client_id in clients:
             project_client[p["id"]] = clients[client_id].get("name", "")
 
-    # Group by year/month
+    # Group by year/month, track latest entry date
     by_month: dict[str, list[dict]] = {}
+    latest_entry_dt: datetime | None = None
     for entry in entries:
         start_str = entry.get("timeInterval", {}).get("start")
         if not start_str:
             continue
         dt = datetime.fromisoformat(start_str)
+        if latest_entry_dt is None or dt > latest_entry_dt:
+            latest_entry_dt = dt
         month_key = dt.strftime("%Y-%m")
         by_month.setdefault(month_key, []).append(entry)
 
@@ -105,12 +135,19 @@ def export_workspace(
     safe_ws_name = _sanitize_dirname(workspace_name)
     ws_dir = output_dir / safe_ws_name
     counts: dict[str, int] = {}
+    now = datetime.now(timezone.utc)
+    current_date_str = now.strftime("%Y-%m-%d")
     for month_key, month_entries in sorted(by_month.items()):
         year, month = month_key.split("-")
         year_dir = ws_dir / year
         year_dir.mkdir(parents=True, exist_ok=True)
-        # Filename carries workspace + year so files stay identifiable when moved
-        csv_path = year_dir / f"{safe_ws_name}_{year}-{month}.csv"
+
+        # For current month, include date in filename; otherwise just year-month
+        if _is_current_month(year, month):
+            csv_filename = f"{safe_ws_name}_{year}-{month}-{current_date_str}.csv"
+        else:
+            csv_filename = f"{safe_ws_name}_{year}-{month}.csv"
+        csv_path = year_dir / csv_filename
 
         with open(csv_path, "w", newline="", encoding="utf-8") as f:
             writer = csv.writer(f)
@@ -150,7 +187,11 @@ def export_workspace(
                     (entry.get("timeInterval") or {}).get("timeZone", ""),
                 ])
 
+        # Clean up old current-month files if this is the current month
+        if _is_current_month(year, month):
+            _cleanup_old_current_month_files(year_dir, safe_ws_name, year, month, current_date_str)
+
         counts[month_key] = len(month_entries)
         print(f"  Wrote {csv_path.relative_to(output_dir)} ({len(month_entries)} entries)")
 
-    return counts
+    return counts, latest_entry_dt
