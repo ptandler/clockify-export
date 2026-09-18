@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0]
+
 ### Added
 - Auto-refresh cache when unknown project/client/tag ID encountered during entry processing
 - Cache for workspaces, projects, clients, tags with 1-week expiry
