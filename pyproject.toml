@@ -1,6 +1,6 @@
 [project]
 name = "clockify-export"
-version = "0.1.2"
+version = "0.1.4"
 description = "Export Clockify time entries to CSV with incremental support"
 readme = "README.md"
 requires-python = ">=3.11"

@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+uv version --bump $@
+uv run pytest
+git add -A
+git commit -m "chore: release v$(uv version --short)"
+git tag "v$(uv version --short)"
+git push && git push --tags
