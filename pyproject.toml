@@ -20,6 +20,12 @@ classifiers = [
 ]
 dependencies = []
 
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-mock",
+]
+
 [project.urls]
 Homepage = "https://github.com/ptandler/clockify-export"
 Repository = "https://github.com/ptandler/clockify-export"
