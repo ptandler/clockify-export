@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
-uv version --bump $@
+set -e
+if ! git diff --quiet || ! git diff --cached --quiet; then
+  echo "Error: Uncommitted changes detected. Commit or stash them first."
+  exit 1
+fi
 uv run pytest
+uv version --bump $@
 git add -A
-git commit -m "chore: release v$(uv version --short)"
-git tag "v$(uv version --short)"
+version="v$(uv version --short)"
+git commit -m "chore: release $version"
+git tag "$version"
 git push && git push --tags
