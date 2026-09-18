@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 
 CACHE_DIR = ".cache"
+DEFAULT_MAX_AGE_SECONDS = 7 * 24 * 60 * 60  # 1 week
 
 
 def get_cache_dir(export_dir: Path) -> Path:
@@ -30,10 +32,17 @@ def _write_json(path: Path, data: dict) -> None:
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
 
 
-def load_cache(export_dir: Path, name: str) -> dict | None:
-    """Load cached data by name."""
+def load_cache(export_dir: Path, name: str, max_age_seconds: int = DEFAULT_MAX_AGE_SECONDS) -> dict | None:
+    """Load cached data by name, return None if expired or missing."""
     cache_dir = get_cache_dir(export_dir)
-    return _read_json(cache_dir / f"{name}.json")
+    data = _read_json(cache_dir / f"{name}.json")
+    if data is None:
+        return None
+    # Check age
+    cached_time = data.get("_cached_at", 0)
+    if time.time() - cached_time > max_age_seconds:
+        return None
+    return data
 
 
 def save_cache(export_dir: Path, name: str, data: dict) -> bool:
@@ -43,13 +52,15 @@ def save_cache(export_dir: Path, name: str, data: dict) -> bool:
     existing = _read_json(path)
     if existing == data:
         return False
-    _write_json(path, data)
+    # Add timestamp
+    data_with_ts = {"_cached_at": time.time(), **data}
+    _write_json(path, data_with_ts)
     return True
 
 
-def load_workspaces(export_dir: Path) -> list[dict] | None:
+def load_workspaces(export_dir: Path, max_age_seconds: int = DEFAULT_MAX_AGE_SECONDS) -> list[dict] | None:
     """Load cached workspaces."""
-    data = load_cache(export_dir, "workspaces")
+    data = load_cache(export_dir, "workspaces", max_age_seconds)
     return data.get("workspaces") if data else None
 
 
@@ -58,9 +69,9 @@ def save_workspaces(export_dir: Path, workspaces: list[dict]) -> bool:
     return save_cache(export_dir, "workspaces", {"workspaces": workspaces})
 
 
-def load_workspace_data(export_dir: Path, workspace_id: str) -> dict | None:
+def load_workspace_data(export_dir: Path, workspace_id: str, max_age_seconds: int = DEFAULT_MAX_AGE_SECONDS) -> dict | None:
     """Load cached workspace data (projects, clients, tags)."""
-    return load_cache(export_dir, f"workspace_{workspace_id}")
+    return load_cache(export_dir, f"workspace_{workspace_id}", max_age_seconds)
 
 
 def save_workspace_data(

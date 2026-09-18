@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .api import ClockifyAPI, parse_iso_duration_to_hours
-from .cache import load_workspace_data, save_workspace_data
+from .cache import load_workspace_data, save_workspace_data, DEFAULT_MAX_AGE_SECONDS
 
 CSV_HEADERS = [
     "Date",
@@ -68,6 +68,8 @@ def export_workspace(
     workspace_name: str,
     output_dir: Path,
     since: datetime | None = None,
+    use_cache: bool = True,
+    max_age_seconds: int = DEFAULT_MAX_AGE_SECONDS,
 ) -> tuple[dict[str, int], datetime | None]:
     """Export all time entries for a workspace, grouped by year/month.
 
@@ -81,22 +83,31 @@ def export_workspace(
     print(f"  User: {user.get('name', user_id)}")
 
     # Try to load from cache first
-    cached = load_workspace_data(output_dir, workspace_id)
-    if cached:
-        projects = {p["id"]: p for p in cached.get("projects", [])}
-        clients = {c["id"]: c for c in cached.get("clients", [])}
-        tags = {t["id"]: t for t in cached.get("tags", [])}
-        print("  Using cached projects, clients, tags")
+    if use_cache:
+        cached = load_workspace_data(output_dir, workspace_id, max_age_seconds)
+        if cached:
+            projects = {p["id"]: p for p in cached.get("projects", [])}
+            clients = {c["id"]: c for c in cached.get("clients", [])}
+            tags = {t["id"]: t for t in cached.get("tags", [])}
+            print("  Using cached projects, clients, tags")
+        else:
+            # Fetch lookup tables
+            print("  Fetching projects...")
+            projects = {p["id"]: p for p in api.get_projects(workspace_id)}
+            print("  Fetching clients...")
+            clients = {c["id"]: c for c in api.get_clients(workspace_id)}
+            print("  Fetching tags...")
+            tags = {t["id"]: t for t in api.get_tags(workspace_id)}
+            # Save to cache
+            save_workspace_data(output_dir, workspace_id, list(projects.values()), list(clients.values()), list(tags.values()))
     else:
-        # Fetch lookup tables
+        # Fetch lookup tables (no cache)
         print("  Fetching projects...")
         projects = {p["id"]: p for p in api.get_projects(workspace_id)}
         print("  Fetching clients...")
         clients = {c["id"]: c for c in api.get_clients(workspace_id)}
         print("  Fetching tags...")
         tags = {t["id"]: t for t in api.get_tags(workspace_id)}
-        # Save to cache
-        save_workspace_data(output_dir, workspace_id, list(projects.values()), list(clients.values()), list(tags.values()))
 
     # Fetch time entries first to know which projects have entries
     print("  Fetching time entries...")

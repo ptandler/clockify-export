@@ -79,6 +79,11 @@ def main() -> None:
         action="store_true",
         help="Create ~/.config/clockify-export/config.toml and exit",
     )
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Bypass cache, fetch fresh projects/clients/tags from API",
+    )
     args = parser.parse_args()
 
     if args.init_config:
@@ -181,7 +186,10 @@ def main() -> None:
             print("  Full export mode")
 
         try:
-            counts, latest_entry_dt = export_workspace(api, ws_id, ws_name, output_dir, since=since)
+            counts, latest_entry_dt = export_workspace(
+                api, ws_id, ws_name, output_dir, since=since,
+                use_cache=not args.no_cache,
+            )
             if counts:
                 # Update state to the actual latest entry date (not end of month)
                 if latest_entry_dt:
